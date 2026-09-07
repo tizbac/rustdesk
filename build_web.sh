@@ -14,7 +14,7 @@ VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 
 (
     cd flutter
-    flutter build web --release
+    flutter build web --release --source-maps
 )
 
 web_root=flutter/build/web

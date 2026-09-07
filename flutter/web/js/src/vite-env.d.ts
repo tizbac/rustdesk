@@ -7,4 +7,5 @@ interface Window {
   setByName: any;
   getByName: any;
   init: any;
+  isMobile: () => boolean;
 }

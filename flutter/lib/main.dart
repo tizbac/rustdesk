@@ -183,6 +183,18 @@ void runMobileApp() async {
   gFFI.userModel.refreshCurrentUser();
   runApp(App());
   await initUniLinks();
+  if (isWeb) {
+    final query = Uri.base.queryParameters;
+    final id = query['id'];
+    if (id != null && id.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = globalKey.currentContext;
+        if (context != null) {
+          connect(context, id, password: query['password']);
+        }
+      });
+    }
+  }
 }
 
 void runMultiWindow(

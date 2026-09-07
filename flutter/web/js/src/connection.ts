@@ -10,8 +10,6 @@ import { ControlKey } from "./message";
 import { NatType, ConnType } from "./rendezvous";
 import _sodium from "libsodium-wrappers";
 
-const RS_PUB_KEY = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=";
-
 const TMP_ID = "RAndomTMPID";
 
 let sodiumReady: Promise<any> | null = null;
@@ -27,26 +25,31 @@ function getRdvWsUri(): string {
   if (!url) {
     url = "rs.rustdesk.com:21116";
   }
-  if (!url.startsWith("ws://") && !url.startsWith("wss://")) {
-    url = (location.protocol === "https:" ? "wss://" : "ws://") + url;
-  }
-  return url;
+  url = normalizeServer(url);
+  return globals.saveRdvWsUri(wsBase(url) + "/ws/id");
+}
+
+function wsBase(authority: string): string {
+  return (location.protocol === "https:" ? "wss://" : "ws://") + authority;
+}
+
+function normalizeServer(uri: string): string {
+  return uri
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+    .replace(/\/+$/, "")
+    .replace(/\/ws\/[^/]*$/, "");
 }
 
 // relay_server is normally "host:port" (tcp). The browser needs the ws
-// endpoint, which by convention lives one port above the tcp relay port.
+// endpoint at the same authority, under the `/ws/relay` path.
 function relayWsUri(relayServer: string): string {
-  let uri = relayServer.trim();
-  if (uri.startsWith("ws://") || uri.startsWith("wss://")) return uri;
-  const isHttps = location.protocol === "https:";
-  if (uri.indexOf(":") >= 0 && uri.indexOf(":") == uri.lastIndexOf(":")) {
-    const parts = uri.split(":");
-    const port = parseInt(parts.pop() as any);
-    if (!isNaN(port)) {
-      uri = parts.join(":") + ":" + (port + 1);
-    }
-  }
-  return (isHttps ? "wss://" : "ws://") + uri;
+  const uri = normalizeServer(relayServer.trim());
+  return globals.saveRelayWsUri(wsBase(uri) + "/ws/relay");
+}
+
+function relayServerOverride(): string | undefined {
+  const relay = globals.getOption("custom-relay-server");
+  return relay || undefined;
 }
 
 export default class Connection {
@@ -187,22 +190,22 @@ export default class Connection {
           return;
         }
         clearTimeout(timeout);
-        if (!ph.relay_server) {
+        if (!ph.relay_server && !relayServerOverride()) {
           globals.msgbox("error", "Failed to connect", "No relay server");
           this.close();
           return;
         }
-        this._createRelay(ph.relay_server, ph.pk as any);
+        this._createRelay(ph.relay_server || relayServerOverride()!, ph.pk as any);
         return;
       } else if (u.relay_response) {
         clearTimeout(timeout);
         const rr = u.relay_response;
-        if (!rr.relay_server) {
+        if (!rr.relay_server && !relayServerOverride()) {
           globals.msgbox("error", "Failed to connect", "No relay server");
           this.close();
           return;
         }
-        this._createRelay(rr.relay_server, rr.pk as any);
+        this._createRelay(rr.relay_server || relayServerOverride()!, rr.pk as any);
         return;
       } else if (u.fetch_local_addr) {
         clearTimeout(timeout);
@@ -274,7 +277,7 @@ export default class Connection {
     let peerSignPk: Uint8Array | undefined;
     if (signedIdPk && signedIdPk.length) {
       const s = await sodium();
-      const rootPk = s.from_base64(RS_PUB_KEY, s.base64_variants.ORIGINAL);
+      const rootPk = s.from_base64(globals.getPubKey(), s.base64_variants.ORIGINAL);
       try {
         const opened = s.crypto_sign_open(new Uint8Array(signedIdPk), rootPk);
         if (opened) {
