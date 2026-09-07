@@ -30,12 +30,15 @@ function getRdvWsUri(): string {
 }
 
 function wsBase(authority: string): string {
-  return (location.protocol === "https:" ? "wss://" : "ws://") + authority;
+  if (/^wss?:\/\//i.test(authority)) return authority;
+  if (/^https?:\/\//i.test(authority)) {
+    return authority.replace(/^https:\/\//i, "wss://").replace(/^http:\/\//i, "ws://");
+  }
+  return "wss://" + authority;
 }
 
 function normalizeServer(uri: string): string {
   return uri
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
     .replace(/\/+$/, "")
     .replace(/\/ws\/[^/]*$/, "");
 }
