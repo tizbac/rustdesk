@@ -55,7 +55,8 @@ examples/**/target/
 vcpkg_installed
 flutter/lib/generated_plugin_registrant.dart
 libsciter.dylib
-flutter/web/
+flutter/web/js/dist/
+flutter/web/js/node_modules/
 # libdrmtap is cloned at build time by build.py (not a submodule)
 /third_party/libdrmtap/
 # Local git worktrees

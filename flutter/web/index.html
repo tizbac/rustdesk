@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+    <base href="/web/" />
+
+    <meta charset="UTF-8" />
+    <meta content="IE=Edge" http-equiv="X-UA-Compatible" />
+    <meta name="description" content="Remote Desktop." />
+
+    <!-- iOS meta tags & icons -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="RustDesk" />
+    <link rel="apple-touch-icon" href="icons/Icon-192.png" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+    <title>RustDesk</title>
+    <link rel="manifest" href="manifest.json" />
+    
+    <script id="custom-config" type="text/plain">{{CUSTOM_CONFIG}}</script>
+    
+    <script type="module" crossorigin src="js/dist/index.js"></script>
+    <link rel="modulepreload" href="js/dist/vendor.js" />
+    <!-- Fetched while the module below is still being parsed, so that waiting
+         for it to define window.init costs nothing. -->
+    <link rel="preload" as="script" href="main.dart.js" />
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      #root {
+        background-repeat: no-repeat;
+        background-size: 100% auto;
+      }
+
+      .loading-title {
+        font-size: 1.1rem;
+      }
+
+      .loading-sub-title {
+        margin-top: 20px;
+        font-size: 1rem;
+        color: #888;
+      }
+
+      .page-loading-warp {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 26px;
+      }
+      .ant-spin {
+        position: absolute;
+        display: none;
+        -webkit-box-sizing: border-box;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        color: rgba(0, 0, 0, 0.65);
+        color: #1890ff;
+        font-size: 14px;
+        font-variant: tabular-nums;
+        line-height: 1.5;
+        text-align: center;
+        list-style: none;
+        opacity: 0;
+        -webkit-transition: -webkit-transform 0.3s
+          cubic-bezier(0.78, 0.14, 0.15, 0.86);
+        transition: -webkit-transform 0.3s cubic-bezier(0.78, 0.14, 0.15, 0.86);
+        transition: transform 0.3s cubic-bezier(0.78, 0.14, 0.15, 0.86);
+        transition: transform 0.3s cubic-bezier(0.78, 0.14, 0.15, 0.86),
+          -webkit-transform 0.3s cubic-bezier(0.78, 0.14, 0.15, 0.86);
+        -webkit-font-feature-settings: "tnum";
+        font-feature-settings: "tnum";
+      }
+
+      .ant-spin-spinning {
+        position: static;
+        display: inline-block;
+        opacity: 1;
+      }
+
+      .ant-spin-dot {
+        position: relative;
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        font-size: 20px;
+      }
+
+      .ant-spin-dot-item {
+        position: absolute;
+        display: block;
+        width: 9px;
+        height: 9px;
+        background-color: #1890ff;
+        border-radius: 100%;
+        -webkit-transform: scale(0.75);
+        -ms-transform: scale(0.75);
+        transform: scale(0.75);
+        -webkit-transform-origin: 50% 50%;
+        -ms-transform-origin: 50% 50%;
+        transform-origin: 50% 50%;
+        opacity: 0.3;
+        -webkit-animation: antspinmove 1s infinite linear alternate;
+        animation: antSpinMove 1s infinite linear alternate;
+      }
+
+      .ant-spin-dot-item:nth-child(1) {
+        top: 0;
+        left: 0;
+      }
+
+      .ant-spin-dot-item:nth-child(2) {
+        top: 0;
+        right: 0;
+        -webkit-animation-delay: 0.4s;
+        animation-delay: 0.4s;
+      }
+
+      .ant-spin-dot-item:nth-child(3) {
+        right: 0;
+        bottom: 0;
+        -webkit-animation-delay: 0.8s;
+        animation-delay: 0.8s;
+      }
+
+      .ant-spin-dot-item:nth-child(4) {
+        bottom: 0;
+        left: 0;
+        -webkit-animation-delay: 1.2s;
+        animation-delay: 1.2s;
+      }
+
+      .ant-spin-dot-spin {
+        -webkit-transform: rotate(45deg);
+        -ms-transform: rotate(45deg);
+        transform: rotate(45deg);
+        -webkit-animation: antrotate 1.2s infinite linear;
+        animation: antRotate 1.2s infinite linear;
+      }
+
+      .ant-spin-lg .ant-spin-dot {
+        width: 32px;
+        height: 32px;
+        font-size: 32px;
+      }
+
+      .ant-spin-lg .ant-spin-dot i {
+        width: 14px;
+        height: 14px;
+      }
+
+      @media all and (-ms-high-contrast: none), (-ms-high-contrast: active) {
+        .ant-spin-blur {
+          background: #fff;
+          opacity: 0.5;
+        }
+      }
+
+      @-webkit-keyframes antSpinMove {
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes antSpinMove {
+        to {
+          opacity: 1;
+        }
+      }
+
+      @-webkit-keyframes antRotate {
+        to {
+          -webkit-transform: rotate(405deg);
+          transform: rotate(405deg);
+        }
+      }
+
+      @keyframes antRotate {
+        to {
+          -webkit-transform: rotate(405deg);
+          transform: rotate(405deg);
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root">
+      <div
+        id="div-background"
+        style="
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          min-height: 420px;
+        "
+      >
+        <img src="favicon.svg" alt="logo" width="256" />
+        <div class="page-loading-warp">
+          <div class="ant-spin ant-spin-lg ant-spin-spinning">
+            <span class="ant-spin-dot ant-spin-dot-spin">
+              <i class="ant-spin-dot-item"></i>
+              <i class="ant-spin-dot-item"></i>
+              <i class="ant-spin-dot-item"></i><i class="ant-spin-dot-item"></i>
+            </span>
+          </div>
+        </div>
+        <div
+          style="display: flex; align-items: center; justify-content: center"
+        >
+          <img src="favicon.svg" width="32" style="margin-right: 8px" />
+          <span id="span-text">RustDesk Web Client V2 Preview</span>
+        </div>
+      </div>
+    </div>
+    <script>
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
+        .matches
+        ? "dark"
+        : "light";
+      const myTheme = localStorage.getItem("wc-option:local:theme");
+      const them = myTheme || systemTheme;
+
+      const divBackground = document.querySelector("#div-background");
+      if (divBackground) {
+        divBackground.style.backgroundColor = them === "dark" ? "#000" : "#fff";
+      }
+      const spanConsole = document.querySelector("#span-text");
+      if (spanConsole) {
+        spanConsole.style.color = them === "dark" ? "#fff" : "#000";
+      }
+
+      // All five are rewritten by web/js/flutter_build.py (or build_web.sh),
+      // whose pin_engine_directories() explains why; the values below are what
+      // a plain `flutter run -d chrome` needs. Set assetSource to "local" so
+      // the bundled CanvasKit and fonts are always used (air-gap friendly);
+      // "cdn" uses Google's CDNs unless a probe finds them unreachable.
+      var canvasKitRevision = "";
+      var robotoFontPath = "roboto/v32/KFOmCnqEu92Fr1Me4GZLCzYlKw.woff2";
+      var localCanvasKitBaseUrl = "";
+      var assetBase = "";
+      var assetSource = "local";
+
+      // The Flutter engine loads CanvasKit and fonts from Google's CDNs by
+      // default, which makes the web client unusable in air-gapped networks
+      // (rustdesk/rustdesk-server-pro#996). Use the copies bundled with this
+      // app instead, unless this build prefers the CDNs and they answer a
+      // probe. Either way `local-assets = Y` (or `N`) in the custom config
+      // served by the server has the last word.
+      var useLocalAssetsPromise = (function () {
+        try {
+          var text = (
+            document.getElementById("custom-config").textContent || ""
+          ).trim();
+          try {
+            text = atob(text);
+          } catch (e) {}
+          var m = text.match(/^\s*local-assets\s*=\s*(\S+)\s*$/im);
+          if (m && /^(y|1|true)$/i.test(m[1])) {
+            return Promise.resolve(true);
+          }
+          if (m && /^(n|0|false)$/i.test(m[1])) {
+            return Promise.resolve(false);
+          }
+        } catch (e) {}
+        if (assetSource !== "cdn") {
+          return Promise.resolve(true);
+        }
+        if (navigator.onLine === false) {
+          return Promise.resolve(true);
+        }
+        if (!window.fetch || !window.AbortController) {
+          return Promise.resolve(false);
+        }
+        // A failed probe costs the whole timeout on every single load, and the
+        // answer is a property of the network, so remember it. Only the
+        // "unreachable" answer is cached: getting that one wrong serves our
+        // own copies to a browser that could have used the CDN, which costs
+        // bandwidth and nothing else, while a stale "reachable" would hand the
+        // engine a CDN it cannot load from — and it reads canvasKitBaseUrl
+        // once, with no second chance. A successful probe is fast anyway.
+        //
+        // The entry carries the engine revision the probed URLs are pinned to
+        // in its value rather than its key, so an upgrade replaces it instead
+        // of leaving the old one behind for good, and it expires after a week
+        // so that a network nobody has used in a long time is measured again.
+        var CACHE_KEY = "wc-cdn-unreachable";
+        var CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+        function wasUnreachable() {
+          try {
+            var seen = (localStorage.getItem(CACHE_KEY) || "").split(" ");
+            var age = Date.now() - Number(seen[1]);
+            return (
+              seen[0] === canvasKitRevision && age >= 0 && age < CACHE_TTL_MS
+            );
+          } catch (e) {
+            return false;
+          }
+        }
+
+        function rememberUnreachable(unreachable) {
+          try {
+            if (unreachable) {
+              localStorage.setItem(
+                CACHE_KEY,
+                canvasKitRevision + " " + Date.now()
+              );
+            } else {
+              localStorage.removeItem(CACHE_KEY);
+            }
+          } catch (e) {}
+        }
+        var controller = new AbortController();
+        var timer = setTimeout(function () {
+          controller.abort();
+        }, 2500);
+        function probe(url) {
+          return fetch(url, {
+            method: "HEAD",
+            mode: "cors",
+            cache: "no-store",
+            signal: controller.signal,
+          }).then(function (response) {
+            if (!response.ok) {
+              throw new Error("CDN probe failed with HTTP " + response.status);
+            }
+          });
+        }
+        var probed = Promise.all([
+          // CanvasKit asset for this build's engine revision.
+          probe(
+            "https://www.gstatic.com/flutter-canvaskit/" +
+              canvasKitRevision +
+              "/canvaskit.js"
+          ),
+          // Font host; the file the engine downloads as its default font.
+          probe("https://fonts.gstatic.com/s/" + robotoFontPath),
+        ]).then(
+          function () {
+            clearTimeout(timer);
+            rememberUnreachable(false);
+            return false;
+          },
+          function () {
+            clearTimeout(timer);
+            rememberUnreachable(true);
+            return true;
+          }
+        );
+        return wasUnreachable() ? Promise.resolve(true) : probed;
+      })();
+
+      function loadMainDartJs() {
+        function startFlutter() {
+          var scriptTag = document.createElement("script");
+          scriptTag.src = "main.dart.js";
+          scriptTag.type = "application/javascript";
+          document.body.append(scriptTag);
+        }
+        useLocalAssetsPromise.then(function (useLocalAssets) {
+          var config = {};
+          if (assetBase) {
+            config.assetBase = assetBase;
+          }
+          if (useLocalAssets) {
+            console.log(
+              assetSource === "cdn"
+                ? "Google CDNs unreachable, using bundled CanvasKit and fonts."
+                : "Using bundled CanvasKit and fonts."
+            );
+            window.rustdeskLocalFonts = true;
+            config.canvasKitBaseUrl = localCanvasKitBaseUrl;
+            config.fontFallbackBaseUrl = "fonts/";
+          }
+          if (Object.keys(config).length) {
+            window.flutterConfiguration = config;
+          }
+          startFlutter();
+        // Deciding where the assets come from must never be what stops the app
+        // from starting; the engine's own defaults are a working fallback.
+        }, startFlutter);
+      }
+
+      // Nothing registers Flutter's service worker any more: in 3.44 its whole
+      // body unregisters itself, so registering it only bought an
+      // install/activate/unregister round trip before the app could start —
+      // and loadMainDartJs waited on it. The file is still shipped, because
+      // that is what retires the caching worker older clients registered:
+      // their browser re-fetches that URL by itself on navigation and gets the
+      // stub back. Dropping the file instead would 404 that fetch, which
+      // leaves the old registration in place.
+      //
+      // main.dart.js cannot go in any earlier than this: it calls window.init
+      // and the other names js/dist/index.js defines, and that is a module, so
+      // it runs when parsing ends. A dynamically inserted script is async and
+      // would otherwise race it.
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", loadMainDartJs);
+      } else {
+        loadMainDartJs();
+      }
+    </script>
+    <script src="libs/stream/ponyfill.min.js"></script>
+    <script src="libs/stream/StreamSaver.min.js"></script>
+    <script>
+      // StreamSaver streams file-transfer downloads through a "man in the
+      // middle" page whose service worker turns them into a download; by
+      // default that page is on jimmywarting.github.io, so downloads need the
+      // public internet and pass through a third-party origin. Use the copy
+      // bundled under libs/stream/ instead. Its service worker needs a secure
+      // context, which a bundled copy cannot borrow from the CDN's https
+      // origin, so leave StreamSaver on its own default when this page is not
+      // served over https.
+      if (window.isSecureContext) {
+        streamSaver.mitm = "libs/stream/mitm.html";
+      }
+    </script>
+    <!-- Firebase JS SDK 8.10.1 -->
+    <script src="libs/firebase-app.js"></script>
+    <script src="libs/firebase-analytics.js"></script>
+
+    <script>
+      // Your web app's Firebase configuration.
+      // For self-hosted deployments without Firebase this block is inert.
+      const firebaseConfig = {
+        apiKey: "AIzaSyCgehIZk1aFP0E7wZtYRRqrfvNiNAF39-A",
+        authDomain: "rustdesk.firebaseapp.com",
+        databaseURL: "https://rustdesk.firebaseio.com",
+        projectId: "rustdesk",
+        storageBucket: "rustdesk.appspot.com",
+        messagingSenderId: "768133699366",
+        appId: "1:768133699366:web:d50faf0792cb208d7993e7",
+        measurementId: "G-9PEH85N6ZQ",
+      };
+
+      if (window.firebase && window.firebase.initializeApp) {
+        firebase.initializeApp(firebaseConfig);
+        if (window.firebase.analytics) {
+          firebase.analytics();
+        }
+      }
+    </script>
+  </body>
+</html>
