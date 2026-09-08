@@ -3,6 +3,7 @@ import * as message from "./message";
 import * as rendezvous from "./rendezvous";
 import * as globals from "./globals";
 import { VideoRenderer, AudioRenderer } from "./codec";
+import { FfmpegRenderer } from "./ffmpeg";
 import { files } from "./files";
 import { terminal } from "./terminal";
 import { version } from "./gen_js_from_hbb";
@@ -84,7 +85,7 @@ export default class Connection {
   _isSasEnabled = false;
   _password: Uint8Array | undefined;
   _hash: message.Hash | undefined;
-  _video: VideoRenderer | undefined;
+  _video: VideoRenderer | FfmpegRenderer | undefined;
   _videoCodec = "";
   _audio: AudioRenderer | undefined;
   _videoAckRequired = false;
@@ -149,12 +150,22 @@ export default class Connection {
   }
 
   _supportedDecoding() {
+    if (globals.getOption("video_decoder") == "webcodecs") {
+      return {
+        ability_vp8: 1,
+        ability_vp9: 1,
+        ability_h264: 0,
+        ability_h265: 0,
+        ability_av1: 1,
+        prefer: 0,
+      };
+    }
     return {
-      ability_vp8: 1,
-      ability_vp9: 1,
-      ability_h264: 0,
+      ability_vp8: 0,
+      ability_vp9: 0,
+      ability_h264: 1,
       ability_h265: 0,
-      ability_av1: 1,
+      ability_av1: 0,
       prefer: 0,
     };
   }
@@ -1070,9 +1081,13 @@ export default class Connection {
     }
     if (!codec) return;
     if (!this._video || this._videoCodec != codec) {
-      const v = new VideoRenderer(codec as any);
-      v.init();
-      this._video = v;
+      if (globals.getOption("video_decoder") == "webcodecs") {
+        const v = new VideoRenderer(codec as any);
+        v.init();
+        this._video = v;
+      } else {
+        this._video = new FfmpegRenderer(codec);
+      }
       this._videoCodec = codec;
     }
     this._video.display = display;

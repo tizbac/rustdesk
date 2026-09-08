@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig({
+    base: "./",
     plugins: [
         {
             // libsodium-wrappers' ESM build imports "./libsodium.mjs" relative
