@@ -466,6 +466,14 @@ export function isPublicServer() {
   return !jsonServer;
 }
 
+export function isDebug(): boolean {
+  try {
+    if (localStorage.getItem("rd_dbg") == "1") return true;
+  } catch (e) {}
+  return (globalThis as any).__rd_dbg === true ||
+    new URLSearchParams(window.location.search).get("debug") == "1";
+}
+
 // ----------------------------- events / api -----------------------------
 
 function getDisplays() {

@@ -130,17 +130,56 @@ export default class Connection {
     return globals.getOption("image_quality") || "balance";
   }
 
-  setImageQuality(_v: string) {
-    globals.setOption("image_quality", _v);
-    if (this._connected) this.refresh();
+  _qualityOption() {
+    const o: any = {};
+    const q = globals.getOption("image_quality");
+    if (q == "low") {
+      o.image_quality = message.ImageQuality.Low;
+    } else if (q == "best") {
+      o.image_quality = message.ImageQuality.Best;
+    } else if (q == "custom") {
+      const v = parseInt(globals.getOption("custom_image_quality") || "");
+      if (v > 0) o.custom_image_quality = v << 8;
+    } else if (q) {
+      o.image_quality = message.ImageQuality.Balanced;
+    }
+    const fps = parseInt(globals.getOption("custom_fps") || "");
+    if (fps > 0) o.custom_fps = fps;
+    return o;
+  }
+
+  _supportedDecoding() {
+    return {
+      ability_vp8: 1,
+      ability_vp9: 1,
+      ability_h264: 0,
+      ability_h265: 0,
+      ability_av1: 1,
+      prefer: 0,
+    };
+  }
+
+  setImageQuality(v: string) {
+    globals.setOption("image_quality", v);
+    const q = this._qualityOption();
+    if (this._connected) {
+      this.sendMisc({ option: q });
+      this.refresh();
+    }
   }
 
   setCustomImageQuality(v: number) {
     globals.setOption("custom_image_quality", String(v));
+    if (this._connected && v > 0) {
+      this.sendMisc({ option: { custom_image_quality: v << 8 } });
+    }
   }
 
   setCustomFps(v: number) {
     globals.setOption("custom_fps", String(v));
+    if (this._connected && v > 0) {
+      this.sendMisc({ option: { custom_fps: v } });
+    }
   }
 
   async start(
@@ -395,6 +434,10 @@ export default class Connection {
       video_ack_required: this._videoAckRequired,
       version: version,
       my_platform: "Web",
+      option: {
+        ...this._qualityOption(),
+        supported_decoding: this._supportedDecoding(),
+      },
     };
     if (this._connType == ConnType.FILE_TRANSFER) {
       login_request.file_transfer = { dir: "", show_hidden: false };
@@ -979,6 +1022,26 @@ export default class Connection {
 
   handleVideoFrame(frame: message.VideoFrame) {
     const display = frame.display || 0;
+    if (globals.isDebug()) {
+      const g: any = globalThis;
+      const now = performance.now();
+      g.__lag = g.__lag || { n: 0, t0: now, prev: now, next: now, max: 0 };
+      const l = g.__lag;
+      const gap = now - l.prev;
+      if (gap > l.max) l.max = gap;
+      l.n++;
+      l.prev = now;
+      if (now >= l.next) {
+        const secs = (now - l.t0) / 1000;
+        console.log(
+          "[lag] rcv " + l.n + " frames in " + secs.toFixed(1) + "s, " + (l.n / secs).toFixed(2) + "fps, maxGap " + (l.max / 1000).toFixed(1) + "s, sincePrev " + (gap / 1000).toFixed(1) + "s"
+        );
+        l.n = 0;
+        l.t0 = now;
+        l.max = 0;
+        l.next = now + 5000;
+      }
+    }
     const u: any = frame;
     let codec = "";
     let frames: message.EncodedVideoFrame[] = [];
@@ -1105,6 +1168,9 @@ export default class Connection {
     switch (key) {
       case "test_delay":
         const td = (msg as any).test_delay;
+        if (globals.isDebug() && !td.from_client) {
+          console.log("[lag] host test_delay last_delay=" + td.last_delay + "ms tb=" + td.target_bitrate);
+        }
         this.testDelay(message.TestDelay.fromPartial(td));
         break;
       case "peer_info":

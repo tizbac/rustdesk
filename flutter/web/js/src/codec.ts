@@ -136,6 +136,18 @@ export class VideoRenderer {
 
   async _onOutput(frame: any) {
     this._dequeue();
+    if (globals.isDebug()) {
+      const g: any = globalThis;
+      g.__dl = (g.__dl || 0) + 1;
+      if (!g.__dln) g.__dln = performance.now();
+      const now = performance.now();
+      if (now > (g.__dlt || 0) + 4999) {
+        console.log("[lag] rendered " + g.__dl + " in " + ((now - g.__dln) / 1000).toFixed(1) + "s, q=" + (this._decoder ? this._decoder.decodeQueueSize : "-"));
+        g.__dlt = now;
+        g.__dl = 0;
+        g.__dln = now;
+      }
+    }
     const display = this.display;
     if (globals.onVideoFrame(display, frame)) {
       globals.notifyVideoReceived();
