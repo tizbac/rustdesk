@@ -1,5 +1,6 @@
 /build
 /target
+flutter/web/rustdeskWeb.json.sample
 .vscode
 .idea
 .DS_Store
@@ -61,3 +62,5 @@ flutter/web/js/node_modules/
 /third_party/libdrmtap/
 # Local git worktrees
 .worktrees/
+flutter/so.tar.gz
+rustdesk-1.5.0-web-basic.tar.gz

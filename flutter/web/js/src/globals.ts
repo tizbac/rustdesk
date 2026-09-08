@@ -49,6 +49,10 @@ export function onVideoFrame(display: number, frame: any): boolean {
   return false;
 }
 
+export function notifyVideoReceived() {
+  curConn?.sendVideoReceived();
+}
+
 export function onFullscreenChanged(v: boolean) {
   const cb = _cb("onFullscreenChanged");
   if (cb) cb(v);
@@ -63,6 +67,8 @@ function jsonfyForDart(payload: any) {
         ? "[" + value.toString() + "]"
         : value === undefined || value === null
         ? ""
+        : typeof value === "string"
+        ? value
         : JSON.stringify(value);
   }
   return tmp;
@@ -333,10 +339,17 @@ function setUserDefaultOpt(name: string, value: string) {
   LS.setJson("user-default-opt", map);
 }
 
+const SESSION_OPT_DEFAULTS: Record<string, string> = {
+  scroll_style: "scrollauto",
+};
+
 function getSessionOpt(name: string): string {
   const map = LS.json("session-opt", {});
   const v = map[name];
-  return v === undefined || v === null ? "" : String(v);
+  if (v === undefined || v === null || v === "") {
+    return SESSION_OPT_DEFAULTS[name] ?? "";
+  }
+  return String(v);
 }
 
 function setSessionOpt(name: string, value: string) {
@@ -450,7 +463,7 @@ function accountAuth(op: string, remember: boolean) {
 }
 
 export function isPublicServer() {
-  return !LS.get("custom-rendezvous-server");
+  return !jsonServer;
 }
 
 // ----------------------------- events / api -----------------------------
@@ -918,14 +931,12 @@ const urlParams = new URLSearchParams(window.location.search);
 
 const BUILD_DATE = "2026-01-01 00:00:00";
 
-export function saveRdvWsUri(uri: string): string {
-  LS.set("rdv-ws-uri", uri);
-  return uri;
+export function getRdvServerFromJson(): string {
+  return jsonServer;
 }
 
-export function saveRelayWsUri(uri: string): string {
-  LS.set("relay-ws-uri", uri);
-  return uri;
+export function getRelayServerFromJson(): string {
+  return jsonRelay;
 }
 
 let initialized = false;
@@ -933,6 +944,8 @@ let initialized = false;
 const DEFAULT_PUB_KEY = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=";
 
 let pubKey = DEFAULT_PUB_KEY;
+let jsonServer = "";
+let jsonRelay = "";
 
 export function getPubKey(): string {
   return pubKey;
@@ -944,10 +957,10 @@ async function loadConfigFromJson() {
     if (!resp.ok) return;
     const cfg = await resp.json();
     if (cfg.server) {
-      LS.set("custom-rendezvous-server", String(cfg.server));
+      jsonServer = String(cfg.server);
     }
     if (cfg.relay) {
-      LS.set("custom-relay-server", String(cfg.relay));
+      jsonRelay = String(cfg.relay);
     }
     if (cfg.key) {
       pubKey = String(cfg.key);

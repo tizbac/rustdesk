@@ -112,7 +112,10 @@ export class VideoRenderer {
 
   async _onOutput(frame: any) {
     const display = this.display;
-    if (globals.onVideoFrame(display, frame)) return;
+    if (globals.onVideoFrame(display, frame)) {
+      globals.notifyVideoReceived();
+      return;
+    }
     try {
       this._ensureCanvas();
       const ctx = this._canvasCtx;
@@ -124,6 +127,7 @@ export class VideoRenderer {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const rgba = new Uint8Array(imageData.data.buffer);
         globals.onRgba(display, rgba);
+        globals.notifyVideoReceived();
       }
     } catch (e) {
       console.warn("RGBA readback failed", e);
@@ -188,11 +192,28 @@ export class AudioRenderer {
         frame.close();
         return;
       }
-      const len = frame.allocationSize({ format: "s16" });
-      const buf = new ArrayBuffer(len);
-      frame.copyTo(new DataView(buf), { format: "s16" });
+      if (frame.numberOfPlanes === 1) {
+        const len = frame.allocationSize({ format: "s16" });
+        const buf = new ArrayBuffer(len);
+        frame.copyTo(new DataView(buf), { format: "s16" });
+        frame.close();
+        this._player?.feed(new Int16Array(buf));
+        return;
+      }
+      const channels = frame.numberOfChannels;
+      const frames = frame.numberOfFrames;
+      const interleaved = new Int16Array(frames * channels);
+      for (let p = 0; p < frame.numberOfPlanes; p++) {
+        const len = frame.allocationSize({ planeIndex: p, format: "s16" });
+        const plane = new ArrayBuffer(len);
+        frame.copyTo(new DataView(plane), { planeIndex: p, format: "s16" });
+        const samples = new Int16Array(plane);
+        for (let i = 0; i < frames; i++) {
+          interleaved[i * channels + p] = samples[i];
+        }
+      }
       frame.close();
-      this._player?.feed(new Int16Array(buf));
+      this._player?.feed(interleaved);
     } catch (e) {
       console.warn("audio output failed", e);
     }

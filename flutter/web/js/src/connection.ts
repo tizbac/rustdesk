@@ -21,12 +21,12 @@ function sodium(): Promise<any> {
 }
 
 function getRdvWsUri(): string {
-  let url = globals.getOption("custom-rendezvous-server");
+  let url = globals.getRdvServerFromJson();
   if (!url) {
     url = "rs.rustdesk.com:21116";
   }
   url = normalizeServer(url);
-  return globals.saveRdvWsUri(wsBase(url) + "/ws/id");
+  return wsBase(url) + "/ws/id";
 }
 
 function wsBase(authority: string): string {
@@ -47,12 +47,26 @@ function normalizeServer(uri: string): string {
 // endpoint at the same authority, under the `/ws/relay` path.
 function relayWsUri(relayServer: string): string {
   const uri = normalizeServer(relayServer.trim());
-  return globals.saveRelayWsUri(wsBase(uri) + "/ws/relay");
+  return wsBase(uri) + "/ws/relay";
 }
 
 function relayServerOverride(): string | undefined {
-  const relay = globals.getOption("custom-relay-server");
+  const relay = globals.getRelayServerFromJson();
   return relay || undefined;
+}
+
+function concatBytes(...chunks: Uint8Array[]): Uint8Array {
+  const buf = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const c of chunks) {
+    buf.set(c, off);
+    off += c.length;
+  }
+  return buf;
+}
+
+async function sha256(...chunks: Uint8Array[]): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", concatBytes(...chunks)));
 }
 
 export default class Connection {
@@ -69,6 +83,7 @@ export default class Connection {
   _peerInfoEvent = "";
   _isSasEnabled = false;
   _password: Uint8Array | undefined;
+  _hash: message.Hash | undefined;
   _video: VideoRenderer | undefined;
   _videoCodec = "";
   _audio: AudioRenderer | undefined;
@@ -163,6 +178,7 @@ export default class Connection {
         conn_type: this._connType,
         force_relay: true,
         version: version,
+        licence_key: globals.getPubKey(),
       },
     };
     await this._rdv.sendRendezvous(msg);
@@ -171,7 +187,15 @@ export default class Connection {
       this.close();
     }, 15000);
     while (true) {
-      const msg_in = (await this._rdv.next()) as rendezvous.RendezvousMessage;
+      let msg_in: rendezvous.RendezvousMessage;
+      try {
+        msg_in = (await this._rdv.next()) as rendezvous.RendezvousMessage;
+      } catch (e) {
+        clearTimeout(timeout);
+        globals.msgbox("error", "Failed to connect", String(e));
+        this.close();
+        return;
+      }
       if (!msg_in) continue;
       const key = firstKey(msg_in);
       if (!key) continue;
@@ -198,7 +222,7 @@ export default class Connection {
           this.close();
           return;
         }
-        this._createRelay(ph.relay_server || relayServerOverride()!, ph.pk as any);
+        this._createRelay(ph.relay_server || relayServerOverride()!, ph.pk as any, ph.uuid as any);
         return;
       } else if (u.relay_response) {
         clearTimeout(timeout);
@@ -208,12 +232,12 @@ export default class Connection {
           this.close();
           return;
         }
-        this._createRelay(rr.relay_server || relayServerOverride()!, rr.pk as any);
+        this._createRelay(rr.relay_server || relayServerOverride()!, rr.pk as any, rr.uuid as any);
         return;
       } else if (u.fetch_local_addr) {
         clearTimeout(timeout);
         const fla = u.fetch_local_addr;
-        this._createRelay(fla.relay_server as any, undefined);
+        this._createRelay(fla.relay_server as any, undefined, fla.uuid as any);
         return;
       } else if (u.software_update) {
         continue;
@@ -221,7 +245,7 @@ export default class Connection {
     }
   }
 
-  async _createRelay(relayServer: string, signedIdPk?: Uint8Array) {
+  async _createRelay(relayServer: string, signedIdPk?: Uint8Array, relayUuid?: string) {
     const uri = relayWsUri(relayServer);
     this._ws = new Websock(uri, false);
     try {
@@ -234,7 +258,12 @@ export default class Connection {
     }
     try {
       await this._ws.sendRendezvous({
-        request_relay: { id: this._id, uuid: randomUUID() },
+        request_relay: {
+          id: this._id,
+          uuid: relayUuid || randomUUID(),
+          licence_key: globals.getPubKey(),
+          conn_type: this._connType,
+        },
       });
     } catch (e) {
       console.error(e);
@@ -297,7 +326,13 @@ export default class Connection {
       this.close();
     }, 15000);
     for (let i = 0; i < 100; i++) {
-      const msg_in = (await ws.next()) as message.Message;
+      let msg_in: message.Message;
+      try {
+        msg_in = (await ws.next()) as message.Message;
+      } catch (e) {
+        console.warn("relay closed before signed_id", e);
+        break;
+      }
       if (!msg_in) continue;
       const u: any = msg_in;
       if (u.signed_id && u.signed_id.id && peerSignPk) {
@@ -327,24 +362,34 @@ export default class Connection {
   _afterLogin() {
     globals.setConn(this);
     this._connected = true;
-    this._login();
     this._msgLoop();
   }
 
   async _msgLoop() {
     const ws = this._ws;
     while (this._connected && ws) {
-      const msg = (await ws.next(15000)) as message.Message;
+      let msg: message.Message;
+      try {
+        msg = (await ws.next(15000)) as message.Message;
+      } catch (e) {
+        console.warn("relay closed", e);
+        this.close();
+        return;
+      }
       if (!msg) continue;
       if (!this._connected) return;
       this._handleMessageType(msg);
     }
   }
 
-  _login() {
+  _login(password?: Uint8Array) {
     const login_request: any = {
-      username: "",
-      password: this._password ? new Uint8Array(this._password) : new Uint8Array(),
+      username: this._peerId,
+      password: password
+        ? password
+        : this._password
+          ? new Uint8Array(this._password)
+          : new Uint8Array(),
       my_id: TMP_ID,
       my_name: globals.getMyName(),
       video_ack_required: this._videoAckRequired,
@@ -374,7 +419,19 @@ export default class Connection {
   login(password: string) {
     this._password = new TextEncoder().encode(password);
     if (!this._connected) return;
-    this._login();
+    if (this._hash) {
+      this._loginWithHash();
+    }
+  }
+
+  async _loginWithHash() {
+    const h = this._hash;
+    if (!h || !this._password || !this._connected) return;
+    const salt = new TextEncoder().encode(h.salt);
+    const challenge = new TextEncoder().encode(h.challenge);
+    const h1 = await sha256(this._password, salt);
+    const h2 = await sha256(h1, challenge);
+    this._login(h2);
   }
 
   send2fa(code: string) {
@@ -440,6 +497,14 @@ export default class Connection {
     this._send({ misc: misc });
   }
 
+  private _lastVideoRecvTime = 0;
+  sendVideoReceived() {
+    const now = Date.now();
+    if (now - this._lastVideoRecvTime < 1000) return;
+    this._lastVideoRecvTime = now;
+    this._send({ misc: { video_received: true } });
+  }
+
   inputKey(
     name: string,
     down: boolean,
@@ -449,15 +514,16 @@ export default class Connection {
     shift = false,
     command = false
   ) {
-    const ck = this._nameToCk(name);
     const msg: message.DeepPartial<message.Message> = {
       key_event: {
         down,
         press,
         modifiers: this._modifiers(alt, ctrl, shift, command),
         mode: this._keyboardMode,
-        ...(ck !== undefined
-          ? { control_key: ck, seq: "" }
+        ...(this._nameToCk(name) !== undefined
+          ? { control_key: this._nameToCk(name) }
+          : this._nameToChar(name) !== undefined
+          ? { chr: this._shiftedCharCode(this._nameToChar(name)!, shift) }
           : name.length == 1
           ? { chr: name.charCodeAt(0) }
           : { seq: name }),
@@ -472,9 +538,11 @@ export default class Connection {
     if (data.ctrl) modifiers.push(ControlKey.Control);
     if (data.shift) modifiers.push(ControlKey.Shift);
     if (data.command) modifiers.push(ControlKey.Meta);
+    const ck = this._usbHidToCk(data.usb_hid);
+    const char = this._nameToChar(String(data.name || ""));
     const msg: message.DeepPartial<message.Message> = {
       key_event: {
-        down: data.down == true,
+        down: data.down == true || data.down === "true",
         press: data.press == true,
         modifiers,
         mode: this._keyboardMode,
@@ -486,10 +554,103 @@ export default class Connection {
           ? { unicode: data.unicode }
           : data.seq !== undefined
           ? { seq: data.seq }
+          : ck !== undefined
+          ? { control_key: ck }
+          : char !== undefined
+          ? { chr: char.charCodeAt(0) }
+          : String(data.name || "").length == 1
+          ? { chr: String(data.name).charCodeAt(0) }
+          : String(data.name || "").length
+          ? { seq: String(data.name) }
           : {}),
       },
     };
     this._send(msg);
+  }
+
+  // Map a key name to a printable base character (lowercase/unshifted).
+  _nameToChar(name: string): string | undefined {
+    if (name.length == 1) return name;
+    const map: any = {
+      VK_SPACE: " ",
+      VK_0: "0", VK_1: "1", VK_2: "2", VK_3: "3", VK_4: "4",
+      VK_5: "5", VK_6: "6", VK_7: "7", VK_8: "8", VK_9: "9",
+      VK_A: "a", VK_B: "b", VK_C: "c", VK_D: "d", VK_E: "e",
+      VK_F: "f", VK_G: "g", VK_H: "h", VK_I: "i", VK_J: "j",
+      VK_K: "k", VK_L: "l", VK_M: "m", VK_N: "n", VK_O: "o",
+      VK_P: "p", VK_Q: "q", VK_R: "r", VK_S: "s", VK_T: "t",
+      VK_U: "u", VK_V: "v", VK_W: "w", VK_X: "x", VK_Y: "y",
+      VK_Z: "z",
+      VK_QUOTE: "'", VK_COMMA: ",", VK_MINUS: "-", VK_SLASH: "/",
+      VK_SEMICOLON: ";", VK_LBRACKET: "[", VK_RBRACKET: "]",
+      VK_BACKSLASH: "\\", VK_PLUS: "+", VK_BACKTICK: "`",
+      VK_PERIOD: ".", VK_EQUALS: "=",
+    };
+    return map[name];
+  }
+
+  _shiftedCharCode(base: string, shift: boolean): number {
+    if (shift && base.length == 1) {
+      const upper = base.toUpperCase();
+      if (upper != base) return upper.charCodeAt(0);
+      const shifted: any = { "1": "!", "2": "@", "3": "#", "4": "$", "5": "%",
+        "6": "^", "7": "&", "8": "*", "9": "(", "0": ")",
+        "-": "_", "=": "+", "[": "{", "]": "}", "\\": "|",
+        ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?", "`": "~" };
+      if (shifted[base] !== undefined) return shifted[base].charCodeAt(0);
+    }
+    return base.charCodeAt(0);
+  }
+
+  _usbHidToCk(usbHid: number): ControlKey | undefined {
+    const map: any = {
+      0x29: ControlKey.Escape,
+      0x2a: ControlKey.Backspace,
+      0x2b: ControlKey.Tab,
+      0x2c: ControlKey.Space,
+      0x39: ControlKey.CapsLock,
+      0x3a: ControlKey.F1, 0x3b: ControlKey.F2, 0x3c: ControlKey.F3,
+      0x3d: ControlKey.F4, 0x3e: ControlKey.F5, 0x3f: ControlKey.F6,
+      0x40: ControlKey.F7, 0x41: ControlKey.F8, 0x42: ControlKey.F9,
+      0x43: ControlKey.F10, 0x44: ControlKey.F11, 0x45: ControlKey.F12,
+      0x46: ControlKey.Snapshot,
+      0x47: ControlKey.Scroll,
+      0x48: ControlKey.Pause,
+      0x49: ControlKey.Insert,
+      0x4a: ControlKey.Home,
+      0x4b: ControlKey.PageUp,
+      0x4c: ControlKey.Delete,
+      0x4d: ControlKey.End,
+      0x4e: ControlKey.PageDown,
+      0x4f: ControlKey.RightArrow,
+      0x50: ControlKey.LeftArrow,
+      0x51: ControlKey.DownArrow,
+      0x52: ControlKey.UpArrow,
+      0x53: ControlKey.NumLock,
+      0x55: ControlKey.Multiply,
+      0x56: ControlKey.Subtract,
+      0x57: ControlKey.Add,
+      0x58: ControlKey.NumpadEnter,
+      0x59: ControlKey.Numpad1, 0x5a: ControlKey.Numpad2, 0x5b: ControlKey.Numpad3,
+      0x5c: ControlKey.Numpad4, 0x5d: ControlKey.Numpad5, 0x5e: ControlKey.Numpad6,
+      0x5f: ControlKey.Numpad7, 0x60: ControlKey.Numpad8, 0x61: ControlKey.Numpad9,
+      0x62: ControlKey.Numpad0,
+      0x63: ControlKey.Decimal,
+      0x65: ControlKey.Apps,
+      0x66: ControlKey.Power,
+      0x7f: ControlKey.VolumeMute,
+      0x80: ControlKey.VolumeUp,
+      0x81: ControlKey.VolumeDown,
+      0xe0: ControlKey.Control,
+      0xe1: ControlKey.Shift,
+      0xe2: ControlKey.Alt,
+      0xe3: ControlKey.Meta,
+      0xe4: ControlKey.RControl,
+      0xe5: ControlKey.RShift,
+      0xe6: ControlKey.RAlt,
+      0xe7: ControlKey.Meta,
+    };
+    return map[usbHid];
   }
 
   _nameToCk(name: string): ControlKey | undefined {
@@ -502,18 +663,10 @@ export default class Connection {
       ArrowDown: ControlKey.DownArrow,
       End: ControlKey.End,
       Escape: ControlKey.Escape,
-      F1: ControlKey.F1,
-      F10: ControlKey.F10,
-      F11: ControlKey.F11,
-      F12: ControlKey.F12,
-      F2: ControlKey.F2,
-      F3: ControlKey.F3,
-      F4: ControlKey.F4,
-      F5: ControlKey.F5,
-      F6: ControlKey.F6,
-      F7: ControlKey.F7,
-      F8: ControlKey.F8,
-      F9: ControlKey.F9,
+      F1: ControlKey.F1, F2: ControlKey.F2, F3: ControlKey.F3,
+      F4: ControlKey.F4, F5: ControlKey.F5, F6: ControlKey.F6,
+      F7: ControlKey.F7, F8: ControlKey.F8, F9: ControlKey.F9,
+      F10: ControlKey.F10, F11: ControlKey.F11, F12: ControlKey.F12,
       Home: ControlKey.Home,
       ArrowLeft: ControlKey.LeftArrow,
       Meta: ControlKey.Meta,
@@ -544,6 +697,67 @@ export default class Connection {
       CtrlAltDel: ControlKey.CtrlAltDel,
       RWin: ControlKey.RWin,
       Command: ControlKey.Meta,
+      VK_SPACE: ControlKey.Space,
+      VK_BACK: ControlKey.Backspace,
+      VK_TAB: ControlKey.Tab,
+      VK_ENTER: ControlKey.Return,
+      VK_ESCAPE: ControlKey.Escape,
+      VK_DELETE: ControlKey.Delete,
+      VK_CAPITAL: ControlKey.CapsLock,
+      VK_DOWN: ControlKey.DownArrow,
+      VK_LEFT: ControlKey.LeftArrow,
+      VK_RIGHT: ControlKey.RightArrow,
+      VK_UP: ControlKey.UpArrow,
+      VK_END: ControlKey.End,
+      VK_HOME: ControlKey.Home,
+      VK_NEXT: ControlKey.PageDown,
+      VK_PRIOR: ControlKey.PageUp,
+      VK_CLEAR: ControlKey.Clear,
+      VK_INSERT: ControlKey.Insert,
+      VK_PAUSE: ControlKey.Pause,
+      VK_PRINT: ControlKey.Snapshot,
+      VK_F1: ControlKey.F1, VK_F2: ControlKey.F2, VK_F3: ControlKey.F3,
+      VK_F4: ControlKey.F4, VK_F5: ControlKey.F5, VK_F6: ControlKey.F6,
+      VK_F7: ControlKey.F7, VK_F8: ControlKey.F8, VK_F9: ControlKey.F9,
+      VK_F10: ControlKey.F10, VK_F11: ControlKey.F11, VK_F12: ControlKey.F12,
+      VK_CONTROL: ControlKey.Control,
+      RControl: ControlKey.RControl,
+      VK_SHIFT: ControlKey.Shift,
+      RShift: ControlKey.RShift,
+      VK_MENU: ControlKey.Alt,
+      RAlt: ControlKey.RAlt,
+      Apps: ControlKey.Apps,
+      VK_ADD: ControlKey.Add,
+      VK_SUBTRACT: ControlKey.Subtract,
+      VK_MULTIPLY: ControlKey.Multiply,
+      VK_DIVIDE: ControlKey.Divide,
+      VK_DECIMAL: ControlKey.Decimal,
+      VK_NUMPAD0: ControlKey.Numpad0,
+      VK_NUMPAD1: ControlKey.Numpad1,
+      VK_NUMPAD2: ControlKey.Numpad2,
+      VK_NUMPAD3: ControlKey.Numpad3,
+      VK_NUMPAD4: ControlKey.Numpad4,
+      VK_NUMPAD5: ControlKey.Numpad5,
+      VK_NUMPAD6: ControlKey.Numpad6,
+      VK_NUMPAD7: ControlKey.Numpad7,
+      VK_NUMPAD8: ControlKey.Numpad8,
+      VK_NUMPAD9: ControlKey.Numpad9,
+      VK_CANCEL: ControlKey.Cancel,
+      VK_EXECUTE: ControlKey.Execute,
+      VK_HELP: ControlKey.Help,
+      VK_SELECT: ControlKey.Select,
+      VK_SLEEP: ControlKey.Sleep,
+      VK_SEPARATOR: ControlKey.Separator,
+      VK_CONVERT: ControlKey.Convert,
+      VK_FINAL: ControlKey.Final,
+      VK_HANGUL: ControlKey.Hangul,
+      VK_HANJA: ControlKey.Hanja,
+      VK_JUNJA: ControlKey.Junja,
+      VK_KANA: ControlKey.Kana,
+      VK_KANJI: ControlKey.Kanji,
+      VK_NUMLOCK: ControlKey.NumLock,
+      VK_SCROLL: ControlKey.Scroll,
+      VK_APPS: ControlKey.Apps,
     };
     return map[name];
   }
@@ -569,13 +783,59 @@ export default class Connection {
   }
 
   sendMouse(data: string) {
-    const [x, y, mask] = data.split(",");
+    let m: any;
+    try {
+      m = JSON.parse(data);
+    } catch (e) {
+      return;
+    }
+    let mask = 0;
+    switch (String(m.type || "")) {
+      case "down":
+        mask = 1;
+        break;
+      case "up":
+        mask = 2;
+        break;
+      case "wheel":
+        mask = 3;
+        break;
+      case "trackpad":
+        mask = 4;
+        break;
+      case "move_relative":
+        mask = 5;
+        break;
+    }
+    switch (String(m.buttons || "")) {
+      case "left":
+        mask |= 1 << 3;
+        break;
+      case "right":
+        mask |= 2 << 3;
+        break;
+      case "wheel":
+        mask |= 4 << 3;
+        break;
+      case "back":
+        mask |= 8 << 3;
+        break;
+      case "forward":
+        mask |= 16 << 3;
+        break;
+    }
+    const modifiers = this._modifiers(
+      m.alt === true || m.alt === "true",
+      m.ctrl === true || m.ctrl === "true",
+      m.shift === true || m.shift === "true",
+      m.command === true || m.command === "true"
+    );
     this._send({
       mouse_event: {
-        x: parseInt(x),
-        y: parseInt(y),
-        mask: parseInt(mask),
-        modifiers: [],
+        x: parseInt(m.x) || 0,
+        y: parseInt(m.y) || 0,
+        mask,
+        modifiers,
       },
     });
   }
@@ -661,7 +921,7 @@ export default class Connection {
   handlePeerInfo(pi: message.PeerInfo) {
     this._peerInfo = pi;
     this._isSasEnabled = pi.sas_enabled;
-    this._peerInfoEvent = JSON.stringify({
+    const event = {
       username: pi.username,
       hostname: pi.hostname,
       platform: pi.platform,
@@ -675,22 +935,20 @@ export default class Connection {
         y: d.y,
         cursor_embedded: d.cursor_embedded,
       }))),
-    });
-    globals.pushEvent("peer_info", {
-      username: pi.username,
-      hostname: pi.hostname,
-      platform: pi.platform,
-      version: pi.version,
-      sas_enabled: pi.sas_enabled,
-      current_display: pi.current_display,
-      displays: JSON.stringify(pi.displays.map((d) => ({
-        width: d.width,
-        height: d.height,
-        x: d.x,
-        y: d.y,
-        cursor_embedded: d.cursor_embedded,
-      }))),
-    });
+      features: JSON.stringify({
+        privacy_mode: pi.features?.privacy_mode === true,
+        terminal: pi.features?.terminal === true,
+        port_forward_mux: pi.features?.port_forward_mux === true,
+      }),
+      resolutions: JSON.stringify({
+        resolutions: (pi.resolutions?.resolutions ?? []).map((r) => ({
+          width: r.width,
+          height: r.height,
+        })),
+      }),
+    };
+    this._peerInfoEvent = JSON.stringify(event);
+    globals.pushEvent("peer_info", event);
   }
 
   handleLoginResponse(lr: message.LoginResponse) {
@@ -700,7 +958,18 @@ export default class Connection {
         peer_info: JSON.stringify(lr.peer_info),
       });
     } else if (lr.error) {
-      globals.msgbox("error", "Error", lr.error);
+      if (lr.error == "Wrong Password") {
+        globals.msgbox("re-input-password", lr.error, "Do you want to enter again?", true);
+      } else if (lr.error == "No Password Access") {
+        globals.msgbox(
+          "wait-remote-accept-nook",
+          "Prompt",
+          "Please wait for the remote side to accept your session request...",
+          false
+        );
+      } else {
+        globals.msgbox("error", "Error", lr.error);
+      }
     }
   }
 
@@ -758,13 +1027,14 @@ export default class Connection {
   }
 
   handleCursorData(cd: message.CursorData) {
+    if (!cd.colors || cd.colors.length === 0) return;
     globals.pushEvent("cursor_data", {
       id: Number(cd.id || 0),
       hotx: cd.hotx,
       hoty: cd.hoty,
       width: cd.width,
       height: cd.height,
-      data: cd.colors,
+      colors: cd.colors,
     });
   }
 
@@ -884,8 +1154,15 @@ export default class Connection {
     }
   }
 
-  _handleHash(_hash: message.Hash) {
-    console.debug("hash request ignored");
+  async _handleHash(hash: message.Hash) {
+    this._hash = hash;
+    if (this._password) {
+      await this._loginWithHash();
+    } else {
+      // login without password, the remote side can click accept
+      this._login();
+      globals.msgbox("input-password", "Password Required", "", false);
+    }
   }
 }
 
