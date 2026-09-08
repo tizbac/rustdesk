@@ -29,6 +29,8 @@ export class VideoRenderer {
   _pending: Uint8Array[] = [];
   _pendingKeys: boolean[] = [];
   _haveKey = false;
+  _latestChunk: any = null;
+  _nextTs = 0;
 
   constructor(codec: VideoCodec) {
     this._codec = codec;
@@ -82,21 +84,43 @@ export class VideoRenderer {
   }
 
   _feed(data: Uint8Array, key: boolean) {
+    const decoder: any = this._decoder;
+    if (!decoder || decoder.state == "closed") return;
+    if (decoder.state == "unconfigured") {
+      decoder.configure({ codec: webcodecFor(this._codec) });
+    }
+    const chunk = new (window as any).EncodedVideoChunk({
+      type: key ? "key" : "delta",
+      timestamp: this._nextTs++,
+      data: new Uint8Array(data),
+    });
     try {
-      const decoder: any = this._decoder;
-      if (!decoder || decoder.state == "closed") return;
-      if (decoder.state == "unconfigured") {
-        decoder.configure({ codec: webcodecFor(this._codec) });
+      if (decoder.decodeQueueSize >= 2) {
+        if (!this._latestChunk || chunk.type == "key" || this._latestChunk.type != "key") {
+          this._latestChunk = chunk;
+        }
+      } else {
+        decoder.decode(chunk);
       }
-      const chunk = new (window as any).EncodedVideoChunk({
-        type: key ? "key" : "delta",
-        timestamp: 0,
-        data: new Uint8Array(data),
-      });
-      decoder.decode(chunk);
     } catch (e) {
       console.warn("decode error", e);
       this._failed = true;
+    }
+  }
+
+  _dequeue() {
+    const decoder: any = this._decoder;
+    if (!this._latestChunk || !decoder || decoder.state == "closed") return;
+    while (this._latestChunk && decoder.decodeQueueSize < 2) {
+      const chunk = this._latestChunk;
+      this._latestChunk = null;
+      try {
+        decoder.decode(chunk);
+      } catch (e) {
+        console.warn("decode error", e);
+        this._failed = true;
+        return;
+      }
     }
   }
 
@@ -111,6 +135,7 @@ export class VideoRenderer {
   }
 
   async _onOutput(frame: any) {
+    this._dequeue();
     const display = this.display;
     if (globals.onVideoFrame(display, frame)) {
       globals.notifyVideoReceived();
