@@ -1031,10 +1031,14 @@ export default class Connection {
       if (gap > l.max) l.max = gap;
       l.n++;
       l.prev = now;
+      g.__lagRecv = (g.__lagRecv || 0) + 1;
       if (now >= l.next) {
         const secs = (now - l.t0) / 1000;
+        const u: any = frame;
+        const fs: any[] = u.vp8s?.frames || u.vp9s?.frames || u.h264s?.frames || u.av1s?.frames || u.h265s?.frames || [];
+        const bytes = fs.reduce((a: number, f: any) => a + (f.data?.length || 0), 0) | 0;
         console.log(
-          "[lag] rcv " + l.n + " frames in " + secs.toFixed(1) + "s, " + (l.n / secs).toFixed(2) + "fps, maxGap " + (l.max / 1000).toFixed(1) + "s, sincePrev " + (gap / 1000).toFixed(1) + "s"
+          "[lag] rcv " + l.n + " in " + secs.toFixed(1) + "s " + (l.n / secs).toFixed(2) + "fps maxGap " + (l.max / 1000).toFixed(1) + "s last " + l.n + "B ~" + (bytes / (l.n || 1)) + "B totalRcv=" + g.__lagRecv + " totalRend=" + (g.__lagRend || 0)
         );
         l.n = 0;
         l.t0 = now;
@@ -1073,6 +1077,11 @@ export default class Connection {
     }
     this._video.display = display;
     for (const f of frames) {
+      if (globals.isDebug() && (f.key === true || (f.data?.length || 0) >= 32)) {
+        const g: any = globalThis;
+        (g.__lagArr = g.__lagArr || []).push(performance.now());
+        if (g.__lagArr.length > 600) g.__lagArr.shift();
+      }
       this._video.processFrame(
         new Uint8Array(f.data),
         f.key === true,

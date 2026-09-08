@@ -467,11 +467,15 @@ export function isPublicServer() {
 }
 
 export function isDebug(): boolean {
+  let d = false;
   try {
-    if (localStorage.getItem("rd_dbg") == "1") return true;
+    if (localStorage.getItem("rd_dbg") == "1") d = true;
   } catch (e) {}
-  return (globalThis as any).__rd_dbg === true ||
-    new URLSearchParams(window.location.search).get("debug") == "1";
+  if (!d) d = (globalThis as any).__rd_dbg === true || new URLSearchParams(window.location.search).get("debug") == "1";
+  try {
+    (globalThis as any).__dbgNow = d ? 1 : 0;
+  } catch (e) {}
+  return d;
 }
 
 // ----------------------------- events / api -----------------------------

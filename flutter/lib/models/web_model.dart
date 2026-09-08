@@ -214,9 +214,28 @@ class PlatformFFI {
     globalContext.setProperty(
       'onVideoFrame'.toJS,
       ((JSNumber display, JSObject frame) {
+        if (_dbgFlag()) {
+          _dartLog('dart submit #' + (++_subNo).toString() + ' at ' + DateTime.now().millisecondsSinceEpoch.toString());
+        }
         _videoFrameQueue.submit(display.toDartInt, frame);
       }).toJS,
     );
+  }
+
+  int _subNo = 0;
+
+  bool _dbgFlag() {
+    try {
+      return globalContext.getProperty<JSNumber>('__dbgNow'.toJS).toDartInt == 1;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  void _dartLog(String m) {
+    try {
+      globalContext.getProperty<JSObject>('console'.toJS).callMethod('log'.toJS, m.toJS);
+    } catch (e) {}
   }
 
   void clearVideoFrameCallback() {
@@ -225,8 +244,16 @@ class PlatformFFI {
   }
 
   Future<ui.Image> _importVideoFrame(JSObject frame) async {
-    return await ui_web.createImageFromTextureSource(frame,
+    final dbg = _dbgFlag();
+    if (dbg) {
+      _dartLog('dart import start ' + DateTime.now().millisecondsSinceEpoch.toString());
+    }
+    final img = await ui_web.createImageFromTextureSource(frame,
         width: _videoFrameWidth(frame), height: _videoFrameHeight(frame));
+    if (dbg) {
+      _dartLog('dart import done ' + DateTime.now().millisecondsSinceEpoch.toString());
+    }
+    return img;
   }
 
   void _handleVideoFrameImportError(Object error, StackTrace stackTrace) {
