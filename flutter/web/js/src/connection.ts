@@ -1,4 +1,5 @@
 import Websock from "./websock";
+import { hash as sha256Pure } from "fast-sha256";
 import * as message from "./message";
 import * as rendezvous from "./rendezvous";
 import * as globals from "./globals";
@@ -67,7 +68,11 @@ function concatBytes(...chunks: Uint8Array[]): Uint8Array {
 }
 
 async function sha256(...chunks: Uint8Array[]): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", concatBytes(...chunks)));
+  const data = concatBytes(...chunks);
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  }
+  return sha256Pure(data);
 }
 
 export default class Connection {
