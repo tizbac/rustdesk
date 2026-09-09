@@ -227,7 +227,6 @@ export class FfmpegRenderer {
       this._deltas = [];
     }
     if (!key && !this._haveKey) return;
-    if (!key && data.length < 32) return;
     if (key) {
       this._schedule();
       return;

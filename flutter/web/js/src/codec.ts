@@ -29,13 +29,19 @@ export class VideoRenderer {
   _pending: Uint8Array[] = [];
   _pendingKeys: boolean[] = [];
   _haveKey = false;
-  _latestChunk: any = null;
   _nextTs = 0;
   _lastOut = 0;
   _outGap = 0;
-  _flushing = false;
-  _needsKey = false;
-  _heldBuffer: any[] = [];
+  _watchdogTimer: any = null;
+  _rebuilding = false;
+  _lastFedItem: { data: Uint8Array; key: boolean } | null = null;
+  _recovering = false;
+  _recoverStreak = 0;
+  _lastRecover = 0;
+  _resync = true;
+  _totalFed = 0;
+  _outCount = 0;
+  _trailingSynths = 0;
 
   constructor(codec: VideoCodec) {
     this._codec = codec;
@@ -54,21 +60,57 @@ export class VideoRenderer {
     }
     try {
       const decoder = new (window as any).VideoDecoder({
-        output: (frame: any) => this._onOutput(frame),
+        output: (frame: any) => {
+          if (decoder !== this._decoder) {
+            try {
+              frame.close();
+            } catch (e) {}
+            return;
+          }
+          this._onOutput(frame);
+        },
         error: (e: any) => {
-          console.error("VideoDecoder error", e);
-          this._failed = true;
+          if (decoder !== this._decoder) return;
+          this._onDecoderError(e);
         },
       });
       decoder.configure({ codec: codecStr });
       this._decoder = decoder;
       this._ready = true;
+      (globalThis as any).__video = this;
+      this._startWatchdog();
+      if (globals.isDebug()) console.log("[lag] init ok codec=" + this._codec);
       return true;
     } catch (e) {
-      console.warn("WebCodecs init failed for " + this._codec, e);
+      if (globals.isDebug()) console.warn("[lag] init failed codec=" + this._codec, e);
       this._decoder?.close();
       this._finallyFailed();
       return false;
+    }
+  }
+
+  _startWatchdog() {
+    if (this._watchdogTimer) return;
+    this._watchdogTimer = setInterval(() => {
+      try {
+        const age = this._lastOut ? performance.now() - this._lastOut : 0;
+        const decoder = this._decoder;
+        const q = decoder ? decoder.decodeQueueSize : 0;
+        const pendingReal = this._outCount < this._totalFed - this._trailingSynths;
+        if (this._lastOut && age > 700 && pendingReal && this._lastFedItem && !this._recovering && performance.now() - this._lastRecover > 1000) {
+          if (globals.isDebug()) console.log("[lag] watchdog idle age=" + Math.round(age) + " q=" + q + " fed=" + this._totalFed + " out=" + this._outCount + " synth=" + this._trailingSynths);
+          this._recoverPending();
+        }
+      } catch (e) {
+        if (globals.isDebug()) console.warn("[lag] watchdog error", e);
+      }
+    }, 500);
+  }
+
+  _stopWatchdog() {
+    if (this._watchdogTimer) {
+      clearInterval(this._watchdogTimer);
+      this._watchdogTimer = null;
     }
   }
 
@@ -76,26 +118,54 @@ export class VideoRenderer {
     this._failed = true;
   }
 
+  _onDecoderError(e?: any) {
+    if (globals.isDebug()) console.warn("[lag] decoder error", e);
+    this._rebuildDecoder(null);
+  }
+
   processFrame(data: Uint8Array, key: boolean, display: number) {
     if (this.display != display) this.display = display;
-    if (key && data.length > 64) this._lastKeyData = data;
+    if (key && data.length > 64) this._lastKeyData = new Uint8Array(data);
     if (!this._ready || !this._decoder) {
       this._pending.push(data);
       this._pendingKeys.push(key);
       return;
     }
-    if (key) this._haveKey = true;
-    if (!key && !this._haveKey) return;
-    if (!key && data.length < 32) return;
+    if (key) {
+      this._haveKey = true;
+      this._resync = false;
+    } else if (!this._haveKey || this._resync) {
+      return;
+    }
     if (globals.isDebug()) this._feedTs = performance.now();
-    this._feed(data, key);
+    this._feedReal(data, key);
     if (this._checkProbe()) this._probeLatency();
+  }
+
+  _feedReal(data: Uint8Array, key: boolean) {
+    this._totalFed++;
+    this._trailingSynths = 0;
+    this._lastFedItem = { data: new Uint8Array(data), key };
+    this._feed(data, key);
+  }
+
+  _feedDup(data: Uint8Array, key: boolean) {
+    this._totalFed++;
+    this._trailingSynths++;
+    this._feed(data, key);
   }
 
   _lastKeyData: Uint8Array | null = null;
   _lastProbe = 0;
   _feedTs = 0;
   _traceN = 0;
+
+  _timestamp(): number {
+    const now = Math.round(performance.now() * 1000);
+    const ts = Math.max(now, this._nextTs + 1000);
+    this._nextTs = ts;
+    return ts;
+  }
 
   _checkProbe() {
     const g: any = globalThis;
@@ -114,7 +184,10 @@ export class VideoRenderer {
       const codecStr = webcodecFor(this._codec);
       const seen: number[] = [];
       const dec = new (window as any).VideoDecoder({
-        output: () => seen.push(performance.now()),
+        output: (f: any) => {
+          seen.push(performance.now());
+          try { f.close(); } catch (e) {}
+        },
         error: () => seen.push(-1),
       });
       dec.configure({ codec: codecStr });
@@ -142,89 +215,30 @@ export class VideoRenderer {
       (g.__fedT = g.__fedT || []).push([performance.now(), data.length, key ? 1 : 0]);
       if (g.__fedT.length > 400) g.__fedT.shift();
       if (g.__fed == 1 || g.__fed % 30 == 0) {
-        console.log("[lag] fed #" + g.__fed + " size=" + data.length + " key=" + key + " q=" + decoder.decodeQueueSize + " latest=" + (this._latestChunk ? 1 : 0));
+        console.log("[lag] fed #" + g.__fed + " size=" + data.length + " key=" + key + " q=" + decoder.decodeQueueSize);
       }
     }
     if (decoder.state == "unconfigured") {
       decoder.configure({ codec: webcodecFor(this._codec) });
     }
-    if (this._lastOut && this._latestChunk && performance.now() - this._lastOut > 2000) {
-      this._rebuildDecoder(data);
-      return;
-    }
-    const chunk = new (window as any).EncodedVideoChunk({
-      type: key ? "key" : "delta",
-      timestamp: this._nextTs++,
-      data: new Uint8Array(data),
-    });
     try {
-      if (this._flushing) {
-        if (chunk.type == "key") this._heldBuffer.length = 0;
-        this._heldBuffer.push(chunk);
-        return;
-      }
-      if (decoder.decodeQueueSize >= 2) {
-        if (!this._latestChunk || chunk.type == "key" || this._latestChunk.type != "key") {
-          this._latestChunk = chunk;
-        }
-      } else {
-        if (this._needsKey) {
-          if (!this._lastKeyData) return;
-          decoder.decode(new (window as any).EncodedVideoChunk({
-            type: "key",
-            timestamp: this._nextTs++,
-            data: this._lastKeyData,
-          }));
-        }
-        decoder.decode(chunk);
-        this._needsKey = false;
-        if (chunk.type == "key") {
-          this._needsKey = true;
-          this._flushing = true;
-          decoder.flush().then(() => {
-            this._flushing = false;
-            this._drainHeld();
-          }).catch(() => {
-            this._flushing = false;
-          });
-        }
-      }
+      decoder.decode(new (window as any).EncodedVideoChunk({
+        type: key ? "key" : "delta",
+        timestamp: this._timestamp(),
+        data: new Uint8Array(data),
+      }));
     } catch (e) {
-      console.warn("decode error", e);
-      this._failed = true;
+      if (globals.isDebug()) console.warn("[lag] decode error", e);
+      this._onDecoderError(e);
     }
   }
 
-  _drainHeld() {
-    const decoder: any = this._decoder;
-    if (!decoder || decoder.state == "closed") return;
-    const held = this._heldBuffer;
-    this._heldBuffer = [];
-    if (!held.length) {
-      this._needsKey = true;
-      return;
-    }
-    try {
-      if (this._lastKeyData) {
-        decoder.decode(new (window as any).EncodedVideoChunk({
-          type: "key",
-          timestamp: this._nextTs++,
-          data: this._lastKeyData,
-        }));
-      }
-      for (const c of held) {
-        if (decoder.state != "configured") break;
-        decoder.decode(c);
-      }
-      this._needsKey = false;
-    } catch (e) {
-      console.warn("decode error", e);
-      this._failed = true;
-    }
-  }
-
-  _rebuildDecoder(_data: Uint8Array) {
+  _rebuildDecoder(_data: Uint8Array | null) {
+    if (this._rebuilding) return;
+    this._rebuilding = true;
     const hadKey = this._haveKey;
+    if (globals.isDebug()) console.log("[lag] rebuild hadKey=" + hadKey + " lastKey=" + (this._lastKeyData ? this._lastKeyData.length : 0));
+    this._stopWatchdog();
     try {
       this._decoder?.close();
     } catch (e) {
@@ -232,35 +246,19 @@ export class VideoRenderer {
     }
     this._decoder = null;
     this._ready = false;
-    this._latestChunk = null;
     this._haveKey = hadKey;
-    if (this.init() && this._lastKeyData) {
-      this._feed(this._lastKeyData, true);
-    }
-  }
-
-  _dequeue() {
-    const decoder: any = this._decoder;
-    if (!this._latestChunk || !decoder || decoder.state == "closed") return;
-    while (this._latestChunk && decoder.decodeQueueSize < 2) {
-      const chunk = this._latestChunk;
-      this._latestChunk = null;
-      try {
-        if (chunk.type != "key" && this._needsKey) {
-          if (!this._lastKeyData) return;
-          decoder.decode(new (window as any).EncodedVideoChunk({
-            type: "key",
-            timestamp: this._nextTs++,
-            data: this._lastKeyData,
-          }));
-        }
-        decoder.decode(chunk);
-        this._needsKey = false;
-      } catch (e) {
-        console.warn("decode error", e);
-        this._failed = true;
-        return;
+    this._resync = true;
+    this._totalFed = 0;
+    this._outCount = 0;
+    this._trailingSynths = 0;
+    this._lastFedItem = null;
+    try {
+      if (this.init() && this._lastKeyData) {
+        this._feedReal(this._lastKeyData, true);
       }
+      globals.getConn()?.refresh();
+    } finally {
+      this._rebuilding = false;
     }
   }
 
@@ -275,20 +273,26 @@ export class VideoRenderer {
   }
 
   async _onOutput(frame: any) {
+    const g0: any = globalThis;
+    g0.__outCb = (g0.__outCb || 0) + 1;
+    if (globals.isDebug() && g0.__outCb <= 20) console.log("[lag] outCb #" + g0.__outCb + " q=" + (this._decoder ? this._decoder.decodeQueueSize : "?"));
     if (this._lastOut) this._outGap = performance.now() - this._lastOut;
     this._lastOut = performance.now();
-    this._dequeue();
-    const g: any = globalThis;
-    g.__out = (g.__out || 0) + 1;
-    g.__outT = (g.__outT || []).concat([performance.now()]);
-    if (g.__outT.length > 400) g.__outT.shift();
-    const now = performance.now();
-    const feedLag = this._feedTs ? now - this._feedTs : -1;
-    if (globals.isDebug() && this._traceN < 8) {
-      g.__tN = (g.__tN || 0) + 1;
-      console.log("[lag] trace" + g.__tN + " feedToOut=" + feedLag.toFixed(0) + "ms");
-      this._traceN++;
-    }
+    this._outCount++;
+    this._recoverStreak = 0;
+    if (globals.isDebug()) {
+      const g: any = globalThis;
+      g.__out = (g.__out || 0) + 1;
+      if (g.__out <= 20) console.log("[lag] output #" + g.__out + " q=" + (this._decoder ? this._decoder.decodeQueueSize : "?"));
+      g.__outT = (g.__outT || []).concat([performance.now()]);
+      if (g.__outT.length > 400) g.__outT.shift();
+      const now = performance.now();
+      const feedLag = this._feedTs ? now - this._feedTs : -1;
+      if (this._traceN < 8) {
+        g.__tN = (g.__tN || 0) + 1;
+        console.log("[lag] trace" + g.__tN + " feedToOut=" + feedLag.toFixed(0) + "ms");
+        this._traceN++;
+      }
       g.__dl = (g.__dl || 0) + 1;
       g.__lagRend = (g.__lagRend || 0) + 1;
       if (!g.__dln) g.__dln = now;
@@ -309,9 +313,16 @@ export class VideoRenderer {
         delete (g as any).__lagArr;
         delete (g as any).__lagDec;
       }
+    }
     const display = this.display;
     const tg = performance.now();
-    const viaTex = globals.onVideoFrame(display, frame);
+    let viaTex = false;
+    try {
+      viaTex = globals.onVideoFrame(display, frame);
+    } catch (e) {
+      if (globals.isDebug()) console.warn("[lag] onVideoFrame error", e);
+      viaTex = false;
+    }
     const bodyMs = performance.now() - tg;
     if (globals.isDebug() && bodyMs >= 20) {
       const g: any = globalThis;
@@ -347,12 +358,46 @@ export class VideoRenderer {
     }
   }
 
-  flush() {
+  _recoverPending() {
+    if (this._recovering || this._rebuilding) return;
+    const decoder = this._decoder;
+    const last = this._lastFedItem;
+    if (!decoder || decoder.state !== "configured" || !last) {
+      this._rebuildDecoder(null);
+      return;
+    }
+    this._recovering = true;
+    this._lastRecover = performance.now();
     try {
-      this._decoder?.flush();
+      const q = decoder.decodeQueueSize;
+      const pending = Math.max(0, this._totalFed - this._trailingSynths - this._outCount);
+      const copies = Math.max(1, Math.min(pending || q, 8));
+      if (globals.isDebug()) console.log("[lag] dup-flush q=" + q + " pending=" + pending + " copies=" + copies + " key=" + last.key);
+      for (let i = 0; i < copies; i++) {
+        this._feedDup(new Uint8Array(last.data), last.key);
+      }
+      this._recoverStreak++;
+      if (this._recoverStreak >= 3) {
+        this._rebuildDecoder(null);
+      }
+    } finally {
+      this._recovering = false;
+    }
+  }
+
+  flush() {
+    this._stopWatchdog();
+    try {
+      this._decoder?.close();
     } catch (e) {
       // ignore
     }
+    this._decoder = null;
+    this._ready = false;
+    this._totalFed = 0;
+    this._outCount = 0;
+    this._trailingSynths = 0;
+    this._lastFedItem = null;
   }
 }
 

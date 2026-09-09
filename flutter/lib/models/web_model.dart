@@ -32,6 +32,9 @@ int _videoFrameHeight(JSObject frame) =>
     frame.getProperty<JSNumber>('displayHeight'.toJS).toDartInt;
 void _closeVideoFrame(JSObject frame) {
   try {
+    if (globalContext.getProperty<JSNumber>('__dbgNow'.toJS).toDartInt == 1) {
+      globalContext.getProperty<JSObject>('console'.toJS).callMethod('log'.toJS, ('dart close ' + DateTime.now().millisecondsSinceEpoch.toString()).toJS);
+    }
     frame.callMethod<JSAny?>('close'.toJS);
   } catch (error) {
     debugPrint('VideoFrame.close failed: $error');
@@ -209,7 +212,15 @@ class PlatformFFI {
   // reverts the JS side to the RGBA readback path.
   void setVideoFrameCallback(
       Future<void> Function(int, ui.Image, bool Function()) fun) {
-    _videoFrameQueue.beginSession(fun);
+    _videoFrameQueue.beginSession((int display, ui.Image image, bool Function() isCurrentSession) async {
+      if (_dbgFlag()) {
+        _dartLog('dart cb start ' + DateTime.now().millisecondsSinceEpoch.toString());
+      }
+      await fun(display, image, isCurrentSession);
+      if (_dbgFlag()) {
+        _dartLog('dart cb done ' + DateTime.now().millisecondsSinceEpoch.toString());
+      }
+    });
     if (!_videoFrameQueue.isEnabled) return;
     globalContext.setProperty(
       'onVideoFrame'.toJS,

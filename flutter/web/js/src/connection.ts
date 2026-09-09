@@ -154,8 +154,16 @@ export default class Connection {
     return o;
   }
 
+  _useWebCodecs() {
+    const opt = globals.getOption("video_decoder");
+    if (opt) {
+      return opt == "webcodecs";
+    }
+    return typeof (window as any).VideoDecoder == "function";
+  }
+
   _supportedDecoding() {
-    if (globals.getOption("video_decoder") == "webcodecs") {
+    if (this._useWebCodecs()) {
       return {
         ability_vp8: 1,
         ability_vp9: 1,
@@ -514,6 +522,7 @@ export default class Connection {
       clearInterval(this._msgQueueTimer);
     } catch (e) {
     }
+    globals.setKeyboardGrabEntered(false);
     const wasClear = this._connected;
     this._connected = false;
     if (this._video) {
@@ -935,7 +944,9 @@ export default class Connection {
     this.refresh();
   }
 
-  enterOrLeave(_v: boolean) {}
+  enterOrLeave(v: boolean) {
+    globals.setKeyboardGrabEntered(v);
+  }
 
   switchDisplay(display: number) {
     this._display = display;
@@ -1086,10 +1097,13 @@ export default class Connection {
     }
     if (!codec) return;
     if (!this._video || this._videoCodec != codec) {
-      if (globals.getOption("video_decoder") == "webcodecs") {
+      if (this._useWebCodecs()) {
         const v = new VideoRenderer(codec as any);
-        v.init();
-        this._video = v;
+        if (v.init()) {
+          this._video = v;
+        } else {
+          this._video = new FfmpegRenderer(codec);
+        }
       } else {
         this._video = new FfmpegRenderer(codec);
       }

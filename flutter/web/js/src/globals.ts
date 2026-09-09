@@ -19,6 +19,24 @@ export function getConn() {
   return curConn;
 }
 
+let keyboardGrabEntered = false;
+let onKeyboardGrabEnteredChange: ((v: boolean) => void) | undefined;
+
+export function setKeyboardGrabEntered(v: boolean) {
+  keyboardGrabEntered = v;
+  onKeyboardGrabEnteredChange?.(v);
+}
+
+export function setKeyboardGrabEnteredListener(
+  fn: ((v: boolean) => void) | undefined
+) {
+  onKeyboardGrabEnteredChange = fn;
+}
+
+export function isKeyboardGrabEntered() {
+  return keyboardGrabEntered;
+}
+
 type Fn = (...args: any[]) => any;
 
 function _cb(name: string): Fn {
