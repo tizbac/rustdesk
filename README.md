@@ -12,6 +12,9 @@
 > **Misuse Disclaimer:** <br>
 > The developers of RustDesk do not condone or support any unethical or illegal use of this software. Misuse, such as unauthorized access, control or invasion of privacy, is strictly against our guidelines. The authors are not responsible for any misuse of the application.
 
+> [!NOTE]
+> **RustDesk Web V2:** this fork carries a second-generation web client (`flutter/web/js`) written from scratch on top of the public RustDesk sources in this repository — not the preview web build published by upstream. It decodes video with WebCodecs (ffmpeg.wasm fallback in browsers without it) and is built with `./build_web.sh`; the [rustdesk-api-server-pro](https://github.com/tizbac/rustdesk-api-server-pro) appliance serves it at `/web`.
+
 
 Chat with us: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
 
